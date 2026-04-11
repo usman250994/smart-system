@@ -1,10 +1,11 @@
 import json
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from openai import OpenAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openai import APIConnectionError, APIStatusError, AuthenticationError, OpenAI, RateLimitError
 
 from app.config import settings
+from app.errors import ConfigurationError, ModelOutputError, ProviderAuthError, ProviderUnavailableError
 from app.rag import index_store
 from app.rag.metadata import get_all_page_numbers
 from app.rag.prompts import RAG_SYSTEM_PROMPT, RAG_USER_TEMPLATE
@@ -33,7 +34,10 @@ def ask_with_context(question: str) -> AskResponse:
     Returns answer with confidence and source page tracking for hallucination detection.
     """
     if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is not set")
+        raise ConfigurationError(
+            message="Live answer generation is currently unavailable.",
+            hint="Set a valid OPENAI_API_KEY in the backend environment to enable live answers.",
+        )
 
     docs = index_store.search(question, k=3)
     context = "\n\n".join(doc.page_content for doc in docs)
@@ -47,19 +51,30 @@ def ask_with_context(question: str) -> AskResponse:
     )
 
     client = OpenAI(api_key=settings.openai_api_key)
-    completion = client.chat.completions.create(
-        model=settings.openai_model,
-        temperature=0.2,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": RAG_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
+    try:
+        completion = client.chat.completions.create(
+            model=settings.openai_model,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": RAG_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
 
-    content = completion.choices[0].message.content
-    payload = json.loads(content)
-    response = AskResponse.model_validate(payload)
+        content = completion.choices[0].message.content
+        payload = json.loads(content)
+        response = AskResponse.model_validate(payload)
+    except AuthenticationError as exc:
+        raise ProviderAuthError() from exc
+    except (APIConnectionError, RateLimitError) as exc:
+        raise ProviderUnavailableError() from exc
+    except APIStatusError as exc:
+        if exc.status_code in {401, 403}:
+            raise ProviderAuthError() from exc
+        raise ProviderUnavailableError() from exc
+    except json.JSONDecodeError as exc:
+        raise ModelOutputError() from exc
     
     # If model did not provide source_page but we have docs, use first doc's page as fallback
     if response.source_page is None and docs:
@@ -74,7 +89,10 @@ def inspect_retrieval(question: str) -> list[dict]:
     Returns list of dicts with page number and content preview.
     """
     if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is not set")
+        raise ConfigurationError(
+            message="Live answer generation is currently unavailable.",
+            hint="Set a valid OPENAI_API_KEY in the backend environment to enable live answers.",
+        )
 
     docs = index_store.search(question, k=3)
     results = []
