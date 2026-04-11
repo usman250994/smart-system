@@ -6,8 +6,15 @@ from typing import Annotated
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.llm_client import ask_llm
-from app.rag.pipeline import ingest_pdf, ask_with_context
-from app.schemas import AskRequest, AskResponse, RagAskRequest, UploadResponse
+from app.rag.pipeline import ingest_pdf, ask_with_context, inspect_retrieval
+from app.schemas import (
+    AskRequest,
+    AskResponse,
+    RagAskRequest,
+    UploadResponse,
+    DebugRetrievalResponse,
+    RetrievedChunk,
+)
 
 DATA_DIR = Path("data")
 
@@ -59,5 +66,36 @@ def rag_ask(payload: RagAskRequest) -> AskResponse:
         return ask_with_context(payload.question)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"Configuration error: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"RAG request failed: {exc}") from exc
+
+
+@app.post(
+    "/rag/debug",
+    responses={400: {"description": "No PDF has been indexed yet"},
+               500: {"description": "Retrieval inspection failed"}},
+)
+def rag_debug(payload: RagAskRequest) -> DebugRetrievalResponse:
+    """Debug endpoint: show which chunks are retrieved for a question (before LLM generation)."""
+    try:
+        chunks = inspect_retrieval(payload.question)
+        retrieved = [
+            RetrievedChunk(
+                page=chunk["page"],
+                content_preview=chunk["content_preview"],
+            )
+            for chunk in chunks
+        ]
+        return DebugRetrievalResponse(
+            question=payload.question,
+            chunks_retrieved=retrieved,
+            total_chunks=len(retrieved),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"Configuration error: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Debug request failed: {exc}") from exc
