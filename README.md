@@ -1,5 +1,7 @@
 ﻿# RAG Powered Smart PDF Assistant
 
+[![Medium](https://img.shields.io/badge/Medium-Read%20Article-black?logo=medium)](https://ai.plainenglish.io/i-built-a-rag-powered-smart-pdf-assistant-heres-what-i-learned-274db8b6dc48)
+
 > Upload any PDF. Ask questions in plain English. Get grounded answers with confidence scores and source page references — powered by OpenAI, LangChain, FAISS, and FastAPI.
 
 ---
